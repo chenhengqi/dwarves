@@ -272,11 +272,13 @@ struct cu {
 	size_t		 function_bytes_removed;
 	int		 build_id_len;
 	unsigned char	 build_id[0];
+	Dwarf_Off	 abbrev_offset;
 };
 
 struct cu *cu__new(const char *name, uint8_t addr_size,
 		   const unsigned char *build_id, int build_id_len,
-		   const char *filename, bool use_obstack);
+		   const char *filename, bool use_obstack,
+		   Dwarf_Off abbrev_offset);
 void cu__delete(struct cu *cu);
 
 void *cu__malloc(struct cu *cu, size_t size);

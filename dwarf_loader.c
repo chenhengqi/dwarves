@@ -1902,7 +1902,7 @@ static int die__process_function(Dwarf_Die *die, struct ftype *ftype,
 		case DW_TAG_template_type_parameter:
 		case DW_TAG_template_value_parameter:
 			/* FIXME: probably we'll have to attach this as a list of
- 			 * template parameters to use at class__fprintf time... 
+ 			 * template parameters to use at class__fprintf time...
  			 * See die__process_class */
 			tag__print_not_supported(dwarf_tag(die));
 			continue;
@@ -2760,14 +2760,14 @@ static int __cus__load_debug_types(struct conf_load *conf, Dwfl_Module *mod, Dwa
 				   const char *filename, const unsigned char *build_id,
 				   int build_id_len, struct cu **cup, struct dwarf_cu *dcup)
 {
-	Dwarf_Off off = 0, noff, type_off;
+	Dwarf_Off off = 0, noff, type_off, abbrev_offset;
 	size_t cuhl;
 	uint8_t pointer_size, offset_size;
 	uint64_t signature;
 
 	*cup = NULL;
 
-	while (dwarf_next_unit(dw, off, &noff, &cuhl, NULL, NULL, &pointer_size,
+	while (dwarf_next_unit(dw, off, &noff, &cuhl, NULL, &abbrev_offset, &pointer_size,
 			       &offset_size, &signature, &type_off)
 		== 0) {
 
@@ -2775,7 +2775,7 @@ static int __cus__load_debug_types(struct conf_load *conf, Dwfl_Module *mod, Dwa
 			struct cu *cu;
 
 			cu = cu__new("", pointer_size, build_id,
-				     build_id_len, filename, conf->use_obstack);
+				     build_id_len, filename, conf->use_obstack, abbrev_offset);
 			if (cu == NULL ||
 			    cu__set_common(cu, conf, mod, elf) != 0) {
 				return DWARF_CB_ABORT;
@@ -2900,7 +2900,7 @@ struct dwarf_thread {
 };
 
 static int dwarf_cus__create_and_process_cu(struct dwarf_cus *dcus, Dwarf_Die *cu_die,
-					    uint8_t pointer_size, void *thr_data)
+					    uint8_t pointer_size, void *thr_data, Dwarf_Off abbrev_offset)
 {
 	/*
 	 * DW_AT_name in DW_TAG_compile_unit can be NULL, first seen in:
@@ -2908,7 +2908,7 @@ static int dwarf_cus__create_and_process_cu(struct dwarf_cus *dcus, Dwarf_Die *c
 	 * /usr/libexec/gcc/x86_64-redhat-linux/4.3.2/ecj1.debug
 	 */
 	const char *name = attr_string(cu_die, DW_AT_name, dcus->conf);
-	struct cu *cu = cu__new(name ?: "", pointer_size, dcus->build_id, dcus->build_id_len, dcus->filename, dcus->conf->use_obstack);
+	struct cu *cu = cu__new(name ?: "", pointer_size, dcus->build_id, dcus->build_id_len, dcus->filename, dcus->conf->use_obstack, abbrev_offset);
 	if (cu == NULL || cu__set_common(cu, dcus->conf, dcus->mod, dcus->elf) != 0)
 		return DWARF_CB_ABORT;
 
@@ -2928,7 +2928,7 @@ static int dwarf_cus__create_and_process_cu(struct dwarf_cus *dcus, Dwarf_Die *c
        return DWARF_CB_OK;
 }
 
-static int dwarf_cus__nextcu(struct dwarf_cus *dcus, Dwarf_Die *die_mem, Dwarf_Die **cu_die, uint8_t *pointer_size, uint8_t *offset_size)
+static int dwarf_cus__nextcu(struct dwarf_cus *dcus, Dwarf_Die *die_mem, Dwarf_Die **cu_die, uint8_t *pointer_size, uint8_t *offset_size, Dwarf_Off *abbrev_offset)
 {
 	Dwarf_Off noff;
 	size_t cuhl;
@@ -2941,7 +2941,7 @@ static int dwarf_cus__nextcu(struct dwarf_cus *dcus, Dwarf_Die *die_mem, Dwarf_D
 		goto out_unlock;
 	}
 
-	ret = dwarf_nextcu(dcus->dw, dcus->off, &noff, &cuhl, NULL, pointer_size, offset_size);
+	ret = dwarf_nextcu(dcus->dw, dcus->off, &noff, &cuhl, abbrev_offset, pointer_size, offset_size);
 	if (ret == 0) {
 		*cu_die = dwarf_offdie(dcus->dw, dcus->off + cuhl, die_mem);
 		if (*cu_die != NULL)
@@ -2960,13 +2960,14 @@ static void *dwarf_cus__process_cu_thread(void *arg)
 	struct dwarf_cus *dcus = dthr->dcus;
 	uint8_t pointer_size, offset_size;
 	Dwarf_Die die_mem, *cu_die;
+	Dwarf_Off abbrev_offset;
 
-	while (dwarf_cus__nextcu(dcus, &die_mem, &cu_die, &pointer_size, &offset_size) == 0) {
+	while (dwarf_cus__nextcu(dcus, &die_mem, &cu_die, &pointer_size, &offset_size, &abbrev_offset) == 0) {
 		if (cu_die == NULL)
 			break;
 
 		if (dwarf_cus__create_and_process_cu(dcus, cu_die,
-						     pointer_size, dthr->data) == DWARF_CB_ABORT)
+						     pointer_size, dthr->data, abbrev_offset) == DWARF_CB_ABORT)
 			goto out_abort;
 	}
 
@@ -3030,10 +3031,10 @@ out_join:
 static int __dwarf_cus__process_cus(struct dwarf_cus *dcus)
 {
 	uint8_t pointer_size, offset_size;
-	Dwarf_Off noff;
+	Dwarf_Off noff, abbrev_offset,
 	size_t cuhl;
 
-	while (dwarf_nextcu(dcus->dw, dcus->off, &noff, &cuhl, NULL, &pointer_size, &offset_size) == 0) {
+	while (dwarf_nextcu(dcus->dw, dcus->off, &noff, &cuhl, &abbrev_offset, &pointer_size, &offset_size) == 0) {
 		Dwarf_Die die_mem;
 		Dwarf_Die *cu_die = dwarf_offdie(dcus->dw, dcus->off + cuhl, &die_mem);
 
@@ -3041,7 +3042,7 @@ static int __dwarf_cus__process_cus(struct dwarf_cus *dcus)
 			break;
 
 		if (dwarf_cus__create_and_process_cu(dcus, cu_die,
-						     pointer_size, NULL) == DWARF_CB_ABORT)
+						     pointer_size, NULL, abbrev_offset) == DWARF_CB_ABORT)
 			return DWARF_CB_ABORT;
 
 		dcus->off = noff;
@@ -3067,11 +3068,11 @@ static int cus__merge_and_process_cu(struct cus *cus, struct conf_load *conf,
 {
 	uint8_t pointer_size, offset_size;
 	struct dwarf_cu *dcu = NULL;
-	Dwarf_Off off = 0, noff;
+	Dwarf_Off off = 0, noff, abbrev_offset;
 	struct cu *cu = NULL;
 	size_t cuhl;
 
-	while (dwarf_nextcu(dw, off, &noff, &cuhl, NULL, &pointer_size,
+	while (dwarf_nextcu(dw, off, &noff, &cuhl, &abbrev_offset, &pointer_size,
 			    &offset_size) == 0) {
 		Dwarf_Die die_mem;
 		Dwarf_Die *cu_die = dwarf_offdie(dw, off + cuhl, &die_mem);
@@ -3081,7 +3082,7 @@ static int cus__merge_and_process_cu(struct cus *cus, struct conf_load *conf,
 
 		if (cu == NULL) {
 			cu = cu__new("", pointer_size, build_id, build_id_len,
-				     filename, conf->use_obstack);
+				     filename, conf->use_obstack, abbrev_offset);
 			if (cu == NULL || cu__set_common(cu, conf, mod, elf) != 0)
 				goto out_abort;
 

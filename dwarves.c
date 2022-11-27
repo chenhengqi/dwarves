@@ -624,7 +624,8 @@ int cu__fprintf_ptr_table_stats_csv(struct cu *cu, FILE *fp)
 
 struct cu *cu__new(const char *name, uint8_t addr_size,
 		   const unsigned char *build_id, int build_id_len,
-		   const char *filename, bool use_obstack)
+		   const char *filename, bool use_obstack
+		   Dwarf_Off abbrev_offset)
 {
 	struct cu *cu = zalloc(sizeof(*cu) + build_id_len);
 
@@ -673,6 +674,7 @@ struct cu *cu__new(const char *name, uint8_t addr_size,
 		if (build_id_len > 0)
 			memcpy(cu->build_id, build_id, build_id_len);
 		cu->priv = NULL;
+		cu->abbrev_offset = abbrev_offset;
 	}
 
 	return cu;
